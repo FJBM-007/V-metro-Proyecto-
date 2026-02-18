@@ -1,5 +1,5 @@
 # V-metro-Proyecto-
-// Definición de pines para los LEDs
+// --- DEFINICIÓN DE PINES ---
 const int ledVerde1 = 4;
 const int ledVerde2 = 5;
 const int ledAmarillo1 = 6;
@@ -9,16 +9,15 @@ const int ledNaranja2 = 9;
 const int ledRojo1 = 10;
 const int ledRojo2 = 11;
 
-// Definición de pines para el pulsador y el micrófono
 const int pinPulsador = 12;
-const int pinMicrofono = A0; // Salida de envolvente del MAX9814
+const int pinMicrofono = A0; 
 
-// Variables para el control del tiempo y el estado
-unsigned long ultimoTiempoActualizacion = 0;
-const long intervaloActualizacion = 100; // Actualizar la lectura cada 100ms
+// --- VARIABLES ---
+const int sampleWindow = 250; // Ventana de muestra en ms (50ms = 20Hz)
+unsigned int sample;
 
 void setup() {
-  // Configurar todos los pines de los LEDs como SALIDAS
+  // Configurar LEDs
   pinMode(ledVerde1, OUTPUT);
   pinMode(ledVerde2, OUTPUT);
   pinMode(ledAmarillo1, OUTPUT);
@@ -28,48 +27,58 @@ void setup() {
   pinMode(ledRojo1, OUTPUT);
   pinMode(ledRojo2, OUTPUT);
 
-  // Configurar el pin del pulsador como ENTRADA
-  pinMode(pinPulsador, INPUT);
+  // Configurar Pulsador
+  pinMode(pinPulsador, INPUT); // Asegúrate de tener una resistencia Pulldown o usa INPUT_PULLUP
   
-  // Inicializar la comunicación serie para depuración (opcional)
   Serial.begin(9600);
 }
 
 void loop() {
-  unsigned long tiempoActual = millis();
-
-  // Comprobar si se ha presionado el pulsador para la prueba de LEDs
+  // 1. Verificar botón de prueba
   if (digitalRead(pinPulsador) == HIGH) {
     pruebaLeds();
-    return; // Sale del loop para no medir sonido mientras se prueba
+    return; 
   }
 
-  // Actualizar la lectura del sonido solo cada 'intervaloActualizacion' milisegundos
-  if (tiempoActual - ultimoTiempoActualizacion >= intervaloActualizacion) {
-    ultimoTiempoActualizacion = tiempoActual;
+  // 2. MEDICIÓN DE SONIDO (Algoritmo Pico a Pico)
+  unsigned long startMillis = millis(); 
+  unsigned int peakToPeak = 0;
+  unsigned int signalMax = 0;
+  unsigned int signalMin = 1024;
 
-    // 1. Leer el valor de la salida de envolvente del MAX9814 (0-1023)
-    // Esta salida ya es un valor de CC que representa el nivel de sonido pico.
-    int valorSensor = analogRead(pinMicrofono);
-
-    // 2. Mapear el valor del sensor a la escala de dB deseada (20-60)
-    // El MAX9814 da un rango amplio, por lo que mapear a 20-60 dB es ideal.
-    int nivelDb = map(valorSensor, 0, 1023, 20, 60);
-    
-    // Imprimir el valor en el Monitor Serie para calibrar y verlo
-    Serial.print("Valor Sensor: ");
-    Serial.print(valorSensor);
-    Serial.print(" -> Nivel dB simulado: ");
-    Serial.println(nivelDb);
-
-    // 3. Actualizar los LEDs según el nivel de sonido
-    actualizarLeds(nivelDb);
+  // Recolectar datos durante 50ms
+  while (millis() - startMillis < sampleWindow) {
+      sample = analogRead(pinMicrofono);
+      if (sample < 1024) {
+          if (sample > signalMax) {
+             signalMax = sample; 
+          }
+          else if (sample < signalMin) {
+             signalMin = sample; 
+          }
+      }
   }
+  
+  peakToPeak = signalMax - signalMin;  // Amplitud de la onda
+  
+  // Convertir a Voltios (aprox) para depuración
+  double volts = (peakToPeak * 5.0) / 1024; 
+  
+  // Imprimir para calibrar
+  Serial.print("Volts: ");
+  Serial.print(volts);
+  Serial.print(" | Lectura Raw: ");
+  Serial.println(peakToPeak);
+
+  // 3. ACTUALIZAR LEDS
+  // Nota: Debes ajustar estos valores "Raw" según tu ruido ambiente.
+  // He puesto valores estimados para un micrófono electret estándar.
+  actualizarLeds(peakToPeak);
 }
 
-// Función para encender los LEDs según el nivel de dB (RANGO 20-60)
-void actualizarLeds(int nivel) {
-  // Primero, apagar todos los LEDs
+// Función corregida para usar la lectura Pico a Pico (0 a 1023)
+void actualizarLeds(int lecturaRaw) {
+  // Apagar todo primero
   digitalWrite(ledVerde1, LOW);
   digitalWrite(ledVerde2, LOW);
   digitalWrite(ledAmarillo1, LOW);
@@ -79,23 +88,21 @@ void actualizarLeds(int nivel) {
   digitalWrite(ledRojo1, LOW);
   digitalWrite(ledRojo2, LOW);
 
-  // Encender LEDs según el nivel de sonido
-  if (nivel >= 20) digitalWrite(ledVerde1, HIGH);   // 20 dB
-  if (nivel >= 25) digitalWrite(ledVerde2, HIGH);   // 25 dB
-  if (nivel >= 30) digitalWrite(ledAmarillo1, HIGH); // 30 dB
-  if (nivel >= 35) digitalWrite(ledAmarillo2, HIGH); // 35 dB
-  if (nivel >= 40) digitalWrite(ledNaranja1, HIGH);  // 40 dB
-  if (nivel >= 45) digitalWrite(ledNaranja2, HIGH);  // 45 dB
-  if (nivel >= 50) digitalWrite(ledRojo1, HIGH);   // 50 dB
-  if (nivel >= 60) digitalWrite(ledRojo2, HIGH);   // 60 dB
+  // Umbrales basados en la amplitud de la onda (ajustar experimentalmente)
+  // Un susurro puede ser 20-50, hablar normal 100-300, gritar > 500
+  if (lecturaRaw >= 30) digitalWrite(ledVerde1, HIGH);   
+  if (lecturaRaw >= 80) digitalWrite(ledVerde2, HIGH);   
+  if (lecturaRaw >= 150) digitalWrite(ledAmarillo1, HIGH); 
+  if (lecturaRaw >= 250) digitalWrite(ledAmarillo2, HIGH); 
+  if (lecturaRaw >= 400) digitalWrite(ledNaranja1, HIGH);  
+  if (lecturaRaw >= 600) digitalWrite(ledNaranja2, HIGH);  
+  if (lecturaRaw >= 800) digitalWrite(ledRojo1, HIGH);   
+  if (lecturaRaw >= 950) digitalWrite(ledRojo2, HIGH);   
 }
 
-// Función para probar todos los LEDs
 void pruebaLeds() {
-  
-  Serial.print("Probar Led\n");
-  
-  // Encender todos los LEDs
+  Serial.println("--- TEST DE LEDS ---");
+  // Encender todos
   digitalWrite(ledVerde1, HIGH);
   digitalWrite(ledVerde2, HIGH);
   digitalWrite(ledAmarillo1, HIGH);
@@ -104,10 +111,9 @@ void pruebaLeds() {
   digitalWrite(ledNaranja2, HIGH);
   digitalWrite(ledRojo1, HIGH);
   digitalWrite(ledRojo2, HIGH);
+  delay(1000);
   
-  delay(1000); // Mantenerlos encendidos por 1 segundo
-
-  // Apagar todos los LEDs
+  // Apagar todos
   digitalWrite(ledVerde1, LOW);
   digitalWrite(ledVerde2, LOW);
   digitalWrite(ledAmarillo1, LOW);
@@ -116,6 +122,5 @@ void pruebaLeds() {
   digitalWrite(ledNaranja2, LOW);
   digitalWrite(ledRojo1, LOW);
   digitalWrite(ledRojo2, LOW);
-  
-  delay(1000); // Mantenerlos encendidos por 1 segundo
+  delay(500);
 }
